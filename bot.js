@@ -80,9 +80,17 @@ async function handleLogin(ctx) {
     await ctx.reply("🔐 Открываю страницу входа, подождите...");
 
     const browser = await chromium.launch({
-    headless: true,
-    executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium'
-});
+        headless: true,
+        executablePath: process.env.CHROMIUM_PATH || undefined,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--no-zygote',
+            '--single-process'
+        ]
+    });
     const page = await browser.newPage();
 
     await page.goto(LOGIN_URL);
