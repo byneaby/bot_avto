@@ -70,11 +70,21 @@ async function getStudent(chatId) {
 // =====================
 // 🔐 ЛОГИН — по кнопке
 // =====================
+async function stopLogin(chatId) {
+    if (loginJobs[chatId]) {
+        clearInterval(loginJobs[chatId].interval);
+        try { await loginJobs[chatId].browser.close(); } catch(e) {}
+        delete loginJobs[chatId];
+    }
+}
+
 async function handleLogin(ctx) {
     const chatId = ctx.chat.id;
 
+    // Если уже запущен — останавливаем старый и запускаем новый
     if (loginJobs[chatId]) {
-        return ctx.reply("⏳ Вход уже запущен. Отсканируйте QR из предыдущего сообщения.");
+        await stopLogin(chatId);
+        await ctx.reply("🔄 Предыдущий сеанс отменён, запускаю новый QR...");
     }
 
     await ctx.reply("🔐 Открываю страницу входа, подождите...");
@@ -119,12 +129,12 @@ async function handleLogin(ctx) {
         { caption: "📱 Отсканируйте QR через приложение eGov\n\n⏳ Бот автоматически определит вход..." }
     );
 
-    loginJobs[chatId] = setInterval(async () => {
+    const interval = setInterval(async () => {
         try {
             const logged = await isLogged(page);
 
             if (logged) {
-                clearInterval(loginJobs[chatId]);
+                clearInterval(loginJobs[chatId].interval);
                 delete loginJobs[chatId];
 
                 const cookies = await page.cookies();
@@ -136,12 +146,13 @@ async function handleLogin(ctx) {
                 await handleInfo(ctx);
             }
         } catch (e) {
-            clearInterval(loginJobs[chatId]);
+            clearInterval(loginJobs[chatId].interval);
             delete loginJobs[chatId];
             await browser.close().catch(() => {});
             await ctx.reply("❌ Ошибка при входе. Попробуйте снова.", mainMenu);
         }
     }, 4000);
+    loginJobs[chatId] = { interval, browser };
 }
 
 // =====================
