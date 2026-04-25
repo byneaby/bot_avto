@@ -1,0 +1,5 @@
+[phases.setup]
+nixPkgs = ["chromium", "nodejs"]
+
+[start]
+cmd = "node bot.js"
