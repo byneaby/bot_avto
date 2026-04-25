@@ -186,21 +186,26 @@ async function handleLogin(ctx) {
         }
 
         // ✅ Получаем session_id из cookies страницы
-        const pageCookies = await page.cookies();
-        const sessionCookie = pageCookies.find(c => c.name === 'session_id');
+const pageCookies = await page.cookies();
+const sessionCookie = pageCookies.find(c => c.name === 'session_id');
 
-        let inlineKeyboard = null;
-        if (sessionCookie) {
-            const mgovUrl = `https://api.avtomektep.kz/mgovSign?id=${sessionCookie.value}&type=AUTHORIZE`;
-            const egovLink = `https://m.egov.kz/mobileSign/?link=${encodeURIComponent(mgovUrl)}`;
-            inlineKeyboard = {
-                reply_markup: {
-                    inline_keyboard: [[
-                        { text: "📲 Открыть eGov Mobile", url: egovLink }
-                    ]]
-                }
-            };
+let inlineKeyboard = null;
+if (sessionCookie) {
+    const sessionId = sessionCookie.value.trim().replace(/\?.*$/, ''); // убираем мусор если есть
+    const mgovUrl = `https://api.avtomektep.kz/mgovSign?id=${sessionId}&type=AUTHORIZE`;
+    const encoded = encodeURIComponent(mgovUrl);
+
+    // Универсальная ссылка — работает и на iOS и на Android
+    const egovLink = `https://egov.kz/cms/ru/mobileSign?link=${encoded}`;
+
+    inlineKeyboard = {
+        reply_markup: {
+            inline_keyboard: [[
+                { text: "📲 Открыть eGov Mobile", url: egovLink }
+            ]]
         }
+    };
+}
 
         const caption = "📱 Отсканируйте QR через приложение eGov\n\n" +
             (inlineKeyboard ? "👆 Или нажмите кнопку ниже — откроется eGov прямо на телефоне\n\n" : "") +
