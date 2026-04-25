@@ -185,29 +185,32 @@ async function handleLogin(ctx) {
             await page.screenshot({ path: qrPath, fullPage: true });
         }
 
-        // ✅ Получаем session_id из cookies страницы
-const pageCookies = await page.cookies();
-const sessionCookie = pageCookies.find(c => c.name === 'session_id');
+        // ✅ Получаем session_id из cookies и чистим от мусора
+        const pageCookies = await page.cookies();
+        const sessionCookie = pageCookies.find(c => c.name === 'session_id');
 
-let inlineKeyboard = null;
-if (sessionCookie) {
-    const sessionId = sessionCookie.value.trim().replace(/\?.*$/, ''); // убираем мусор если есть
-    const mgovUrl = `https://api.avtomektep.kz/mgovSign?id=${sessionId}&type=AUTHORIZE`;
-    const encoded = encodeURIComponent(mgovUrl);
+        let inlineKeyboard = null;
+        if (sessionCookie) {
+            // Чистим session_id — убираем всё после ? или & если вдруг попало
+            const sessionId = sessionCookie.value.split('?')[0].split('&')[0].trim();
 
-    // Универсальная ссылка — работает и на iOS и на Android
-    const egovLink = `https://egov.kz/cms/ru/mobileSign?link=${encoded}`;
+            const mgovUrl = `https://api.avtomektep.kz/mgovSign?id=${sessionId}&type=AUTHORIZE`;
+            const encoded = encodeURIComponent(mgovUrl);
 
-    inlineKeyboard = {
-        reply_markup: {
-            inline_keyboard: [[
-                { text: "📲 Открыть eGov Mobile", url: egovLink }
-            ]]
+            // Оригинальный рабочий формат eGov deep link
+            const egovLink = `https://m.egov.kz/mobileSign/?link=${encoded}`;
+
+            inlineKeyboard = {
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: "📲 Открыть eGov Mobile", url: egovLink }
+                    ]]
+                }
+            };
         }
-    };
-}
 
-        const caption = "📱 Отсканируйте QR через приложение eGov\n\n" +
+        const caption =
+            "📱 Отсканируйте QR через приложение eGov\n\n" +
             (inlineKeyboard ? "👆 Или нажмите кнопку ниже — откроется eGov прямо на телефоне\n\n" : "") +
             "⏳ Бот автоматически определит вход...";
 
