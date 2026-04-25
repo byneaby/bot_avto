@@ -1,5 +1,5 @@
 const { Telegraf } = require("telegraf");
-const { chromium } = require("playwright");
+const puppeteer = require("puppeteer");
 
 const BOT_TOKEN = "8296160712:AAGuvEE0ecucjUg3OftTPpPhTZecIYpifYo";
 const LOGIN_URL = "https://avtomektep.kz/auth/login";
@@ -32,7 +32,7 @@ const mainMenu = {
 // =====================
 async function isLogged(page) {
     try {
-        return await page.evaluate(() => !location.href.includes("auth/login"));
+        return !page.url().includes("auth/login");
     } catch {
         return false;
     }
@@ -80,16 +80,13 @@ async function handleLogin(ctx) {
     await ctx.reply("🔐 Открываю страницу входа, подождите...");
 
     console.log('1. Запускаю браузер...');
-    const browser = await chromium.launch({
+    const browser = await puppeteer.launch({
         headless: true,
-        executablePath: process.env.CHROMIUM_PATH || undefined,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--no-zygote',
-            '--single-process'
+            '--disable-gpu'
         ]
     });
     const page = await browser.newPage();
@@ -115,7 +112,7 @@ async function handleLogin(ctx) {
                 clearInterval(loginJobs[chatId]);
                 delete loginJobs[chatId];
 
-                const cookies = await page.context().cookies();
+                const cookies = await page.cookies();
                 sessions[chatId] = cookies;
 
                 await browser.close();
