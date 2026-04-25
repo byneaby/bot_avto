@@ -1,10 +1,49 @@
 const { Telegraf } = require("telegraf");
 const puppeteer = require("puppeteer");
+const fs = require("fs");
 
 const BOT_TOKEN = "8296160712:AAGuvEE0ecucjUg3OftTPpPhTZecIYpifYo";
 const LOGIN_URL = "https://avtomektep.kz/auth/login";
 const API_URL = "https://api.avtomektep.kz/students/my";
 const ACCOUNT_URL = "https://api.avtomektep.kz/account";
+
+// =====================
+// ⚙️ КОНФИГ (сохраняется в файл)
+// =====================
+const CONFIG_FILE = "/tmp/config.json";
+const USERS_FILE = "/tmp/users.json";
+
+function loadConfig() {
+    try {
+        return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+    } catch {
+        return {
+            adminId: null,         // ID админа (первый кто напишет /admin)
+            isPaid: false,         // true = бот платный
+            contactUsername: "",   // @username куда писать для оплаты
+            contactText: "Напишите нам для получения доступа!"
+        };
+    }
+}
+
+function saveConfig(cfg) {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
+}
+
+function loadUsers() {
+    try {
+        return JSON.parse(fs.readFileSync(USERS_FILE, "utf8"));
+    } catch {
+        return { approved: [], requests: [] };
+    }
+}
+
+function saveUsers(users) {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+}
+
+let config = loadConfig();
+let users = loadUsers();
 
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -15,7 +54,7 @@ const sessions = {};
 const loginJobs = {};
 
 // =====================
-// 🎛 ГЛАВНОЕ МЕНЮ
+// 🎛 МЕНЮ
 // =====================
 const mainMenu = {
     reply_markup: {
@@ -26,6 +65,31 @@ const mainMenu = {
         resize_keyboard: true
     }
 };
+
+const adminMenu = {
+    reply_markup: {
+        keyboard: [
+            [{ text: "📋 Запросы на доступ" }],
+            [{ text: "👥 Пользователи с доступом" }],
+            [{ text: "📞 Настройка контакта" }],
+            [{ text: "💰 Режим оплаты" }],
+            [{ text: "🏠 Выйти из админки" }]
+        ],
+        resize_keyboard: true
+    }
+};
+
+// =====================
+// 🔐 ПРОВЕРКА ДОСТУПА
+// =====================
+function hasAccess(chatId) {
+    if (!config.isPaid) return true;
+    return users.approved.includes(String(chatId));
+}
+
+function isAdmin(chatId) {
+    return String(chatId) === String(config.adminId);
+}
 
 // =====================
 // 🔐 ПРОВЕРКА ВХОДА
@@ -50,25 +114,19 @@ async function getCookieHeader(chatId) {
 async function getAccount(chatId) {
     const cookieHeader = await getCookieHeader(chatId);
     if (!cookieHeader) return null;
-
-    const res = await fetch(ACCOUNT_URL, {
-        headers: { Cookie: cookieHeader }
-    });
+    const res = await fetch(ACCOUNT_URL, { headers: { Cookie: cookieHeader } });
     return await res.json();
 }
 
 async function getStudent(chatId) {
     const cookieHeader = await getCookieHeader(chatId);
     if (!cookieHeader) return null;
-
-    const res = await fetch(API_URL, {
-        headers: { Cookie: cookieHeader }
-    });
+    const res = await fetch(API_URL, { headers: { Cookie: cookieHeader } });
     return await res.json();
 }
 
 // =====================
-// 🔐 ЛОГИН — по кнопке
+// 🔐 ЛОГИН
 // =====================
 async function stopLogin(chatId) {
     if (loginJobs[chatId]) {
@@ -81,7 +139,22 @@ async function stopLogin(chatId) {
 async function handleLogin(ctx) {
     const chatId = ctx.chat.id;
 
-    // Если уже запущен — останавливаем старый и запускаем новый
+    // Проверка доступа
+    if (!hasAccess(chatId)) {
+        const contactText = config.contactUsername
+            ? `👤 Напишите: @${config.contactUsername}`
+            : config.contactText;
+        return ctx.reply(
+            `🔒 Доступ к боту платный.\n\n${contactText}\n\nПосле оплаты вам будет выдан доступ.`,
+            {
+                reply_markup: {
+                    keyboard: [[{ text: "📩 Запросить доступ" }]],
+                    resize_keyboard: true
+                }
+            }
+        );
+    }
+
     if (loginJobs[chatId]) {
         await stopLogin(chatId);
         await ctx.reply("🔄 Предыдущий сеанс отменён, запускаю новый QR...");
@@ -89,41 +162,26 @@ async function handleLogin(ctx) {
 
     await ctx.reply("🔐 Открываю страницу входа, подождите...");
 
-    console.log('1. Запускаю браузер...');
     const browser = await puppeteer.launch({
         headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu'
-        ]
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     });
     const page = await browser.newPage();
 
-    console.log('2. Браузер запущен, открываю страницу...');
     await page.goto(LOGIN_URL);
-    console.log('3. Страница открыта, жду QR...');
     await new Promise(r => setTimeout(r, 5000));
-    console.log('3. Делаю скриншот QR...');
 
     const qrPath = `/tmp/qr_${chatId}.png`;
 
-    // Ждём появления QR картинки и делаем скриншот
     try {
-        // Ждём пока появится canvas или img внутри QR блока
-        const qrImage = await page.waitForSelector('.css-1yjvs5a svg', { timeout: 15000 });
-        console.log('QR картинка появилась');
+        await page.waitForSelector('.css-1yjvs5a svg', { timeout: 15000 });
         await new Promise(r => setTimeout(r, 1000));
         const qrBlock = await page.$('.css-1yjvs5a');
         await qrBlock.screenshot({ path: qrPath });
-        console.log('QR сфотографирован');
     } catch(e) {
-        console.log('Ошибка ожидания QR:', e.message);
         await page.screenshot({ path: qrPath, fullPage: true });
     }
 
-    console.log('4. Скриншот готов, отправляю...');
     await ctx.replyWithPhoto(
         { source: qrPath },
         { caption: "📱 Отсканируйте QR через приложение eGov\n\n⏳ Бот автоматически определит вход..." }
@@ -132,16 +190,12 @@ async function handleLogin(ctx) {
     const interval = setInterval(async () => {
         try {
             const logged = await isLogged(page);
-
             if (logged) {
                 clearInterval(loginJobs[chatId].interval);
                 delete loginJobs[chatId];
-
                 const cookies = await page.cookies();
                 sessions[chatId] = cookies;
-
                 await browser.close();
-
                 await ctx.reply("✅ Вы успешно вошли! Загружаю информацию...", mainMenu);
                 await handleInfo(ctx);
             }
@@ -156,15 +210,27 @@ async function handleLogin(ctx) {
 }
 
 // =====================
-// 📊 ИНФОРМАЦИЯ — по кнопке
+// 📊 ИНФОРМАЦИЯ
 // =====================
 async function handleInfo(ctx) {
     const chatId = ctx.chat.id;
 
-    const [data, accountData] = await Promise.all([
-        getStudent(chatId),
-        getAccount(chatId)
-    ]);
+    if (!hasAccess(chatId)) {
+        const contactText = config.contactUsername
+            ? `👤 Напишите: @${config.contactUsername}`
+            : config.contactText;
+        return ctx.reply(
+            `🔒 Доступ к боту платный.\n\n${contactText}`,
+            {
+                reply_markup: {
+                    keyboard: [[{ text: "📩 Запросить доступ" }]],
+                    resize_keyboard: true
+                }
+            }
+        );
+    }
+
+    const [data, accountData] = await Promise.all([getStudent(chatId), getAccount(chatId)]);
 
     if (!data?.items?.[0]) {
         return ctx.reply("❌ Нет данных. Сначала войдите через кнопку 🔐 Войти через QR", mainMenu);
@@ -175,13 +241,10 @@ async function handleInfo(ctx) {
     const group = item.group;
     const acc = school?.data?.accountingData || {};
     const cert = item.data || {};
-
     const user = accountData?.user || {};
     const fullName = [user.lastName, user.firstName, user.patronymic].filter(Boolean).join(" ") || "Нет данных";
     const phone = user.phone ? `+${user.phone}` : "Нет данных";
     const iin = user.iin || "Нет данных";
-
-
 
     const msg =
 `📊 <b>ИНФОРМАЦИЯ ОБ ОБУЧЕНИИ</b>
@@ -210,6 +273,7 @@ ${item.passed ? "✅ Пройден" : "⏳ В процессе"}
 
 🧾 <b>Сертификат</b>
 Номер: ${cert.certificateNumber || "Нет данных"}
+
 📊 <b>Оценки</b>
 Теория: ${item.rules}
 Практика: ${item.practice}
@@ -229,6 +293,18 @@ IBAN: ${acc.iban || "-"}
 // 🚀 СТАРТ
 // =====================
 bot.start(async (ctx) => {
+    const chatId = ctx.chat.id;
+
+    // Первый пользователь становится админом
+    if (!config.adminId) {
+        config.adminId = String(chatId);
+        saveConfig(config);
+        return ctx.reply(
+            "👑 Вы назначены администратором бота!\n\nИспользуйте /admin для управления.",
+            mainMenu
+        );
+    }
+
     await ctx.reply(
         "👋 Добро пожаловать!\n\n📱 Этот бот показывает информацию об обучении в автошколе.\n\nВыберите действие:",
         mainMenu
@@ -236,16 +312,215 @@ bot.start(async (ctx) => {
 });
 
 // =====================
+// 👑 АДМИН ПАНЕЛЬ
+// =====================
+bot.command("admin", async (ctx) => {
+    const chatId = ctx.chat.id;
+    if (!isAdmin(chatId)) return ctx.reply("❌ У вас нет доступа к админ панели.");
+    await ctx.reply("👑 Добро пожаловать в админ панель!", adminMenu);
+});
+
+// Запросы на доступ
+bot.hears("📋 Запросы на доступ", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    users = loadUsers();
+
+    if (users.requests.length === 0) {
+        return ctx.reply("📭 Нет новых запросов.", adminMenu);
+    }
+
+    for (const req of users.requests) {
+        await ctx.reply(
+            `📩 <b>Запрос на доступ</b>\n\nID: <code>${req.id}</code>\nИмя: ${req.name}\nUsername: ${req.username ? "@" + req.username : "нет"}\nДата: ${req.date}`,
+            {
+                parse_mode: "HTML",
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: "✅ Выдать доступ", callback_data: `approve_${req.id}` },
+                        { text: "❌ Отклонить", callback_data: `reject_${req.id}` }
+                    ]]
+                }
+            }
+        );
+    }
+});
+
+// Пользователи с доступом
+bot.hears("👥 Пользователи с доступом", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    users = loadUsers();
+
+    if (users.approved.length === 0) {
+        return ctx.reply("📭 Нет пользователей с доступом.", adminMenu);
+    }
+
+    const list = users.approved.map((id, i) => `${i + 1}. <code>${id}</code>`).join("\n");
+    await ctx.reply(`👥 <b>Пользователи с доступом:</b>\n\n${list}`, { parse_mode: "HTML", ...adminMenu });
+});
+
+// Настройка контакта
+bot.hears("📞 Настройка контакта", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    await ctx.reply(
+        `📞 <b>Текущий контакт:</b>\nUsername: @${config.contactUsername || "не задан"}\nТекст: ${config.contactText}\n\nОтправьте новый @username для связи:`,
+        { parse_mode: "HTML" }
+    );
+    // Ждём следующего сообщения
+    bot.once("message", async (ctx2) => {
+        if (!isAdmin(ctx2.chat.id)) return;
+        const text = ctx2.message.text?.replace("@", "").trim();
+        config.contactUsername = text;
+        saveConfig(config);
+        await ctx2.reply(`✅ Контакт обновлён: @${text}`, adminMenu);
+    });
+});
+
+// Режим оплаты
+bot.hears("💰 Режим оплаты", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    await ctx.reply(
+        `💰 <b>Текущий режим:</b> ${config.isPaid ? "🔒 Платный" : "🔓 Бесплатный"}\n\nВыберите режим:`,
+        {
+            parse_mode: "HTML",
+            reply_markup: {
+                inline_keyboard: [[
+                    { text: "🔓 Бесплатный", callback_data: "mode_free" },
+                    { text: "🔒 Платный", callback_data: "mode_paid" }
+                ]]
+            }
+        }
+    );
+});
+
+// Выйти из админки
+bot.hears("🏠 Выйти из админки", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    await ctx.reply("👋 Вы вышли из админ панели.", mainMenu);
+});
+
+// =====================
+// 📩 ЗАПРОС ДОСТУПА
+// =====================
+bot.hears("📩 Запросить доступ", async (ctx) => {
+    const chatId = String(ctx.chat.id);
+    users = loadUsers();
+
+    if (users.approved.includes(chatId)) {
+        return ctx.reply("✅ У вас уже есть доступ!", mainMenu);
+    }
+
+    if (users.requests.find(r => r.id === chatId)) {
+        return ctx.reply("⏳ Ваш запрос уже отправлен. Ожидайте подтверждения.");
+    }
+
+    const from = ctx.from;
+    users.requests.push({
+        id: chatId,
+        name: [from.first_name, from.last_name].filter(Boolean).join(" "),
+        username: from.username || "",
+        date: new Date().toLocaleString("ru-RU")
+    });
+    saveUsers(users);
+
+    // Уведомляем админа
+    if (config.adminId) {
+        await bot.telegram.sendMessage(
+            config.adminId,
+            `📩 <b>Новый запрос на доступ!</b>\n\nИмя: ${[from.first_name, from.last_name].filter(Boolean).join(" ")}\nUsername: ${from.username ? "@" + from.username : "нет"}\nID: <code>${chatId}</code>\n\nОткройте /admin → Запросы на доступ`,
+            { parse_mode: "HTML" }
+        );
+    }
+
+    await ctx.reply("✅ Ваш запрос отправлен!\n\nАдминистратор рассмотрит его в ближайшее время.");
+});
+
+// =====================
+// 🎛 CALLBACK КНОПКИ
+// =====================
+bot.action(/approve_(.+)/, async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    const userId = ctx.match[1];
+    users = loadUsers();
+
+    if (!users.approved.includes(userId)) {
+        users.approved.push(userId);
+    }
+    users.requests = users.requests.filter(r => r.id !== userId);
+    saveUsers(users);
+
+    await ctx.editMessageText(`✅ Доступ выдан пользователю ${userId}`);
+
+    // Уведомляем пользователя
+    try {
+        await bot.telegram.sendMessage(userId, "🎉 Вам выдан доступ к боту!\n\nТеперь вы можете пользоваться всеми функциями.", mainMenu);
+    } catch(e) {}
+});
+
+bot.action(/reject_(.+)/, async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    const userId = ctx.match[1];
+    users = loadUsers();
+    users.requests = users.requests.filter(r => r.id !== userId);
+    saveUsers(users);
+
+    await ctx.editMessageText(`❌ Запрос пользователя ${userId} отклонён`);
+
+    try {
+        await bot.telegram.sendMessage(userId, "❌ Ваш запрос на доступ отклонён.\n\nЕсли есть вопросы — обратитесь к администратору.");
+    } catch(e) {}
+});
+
+bot.action("mode_free", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    config.isPaid = false;
+    saveConfig(config);
+    await ctx.editMessageText("✅ Режим изменён: 🔓 Бесплатный — все пользователи имеют доступ.");
+});
+
+bot.action("mode_paid", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    config.isPaid = true;
+    saveConfig(config);
+    await ctx.editMessageText("✅ Режим изменён: 🔒 Платный — только одобренные пользователи имеют доступ.");
+});
+
+// =====================
 // 🎛 ОБРАБОТЧИКИ КНОПОК
 // =====================
 bot.hears("🔐 Войти через QR", handleLogin);
 bot.hears("📊 Информация об обучении", handleInfo);
-
-// =====================
-// ⌨️ КОМАНДЫ
-// =====================
 bot.command("login", handleLogin);
 bot.command("info", handleInfo);
+
+// Команда выдачи доступа вручную
+bot.command("approve", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    const userId = ctx.message.text.split(" ")[1];
+    if (!userId) return ctx.reply("Использование: /approve USER_ID");
+
+    users = loadUsers();
+    if (!users.approved.includes(userId)) users.approved.push(userId);
+    users.requests = users.requests.filter(r => r.id !== userId);
+    saveUsers(users);
+
+    await ctx.reply(`✅ Доступ выдан: ${userId}`);
+    try {
+        await bot.telegram.sendMessage(userId, "🎉 Вам выдан доступ к боту!\n\nТеперь вы можете пользоваться всеми функциями.", mainMenu);
+    } catch(e) {}
+});
+
+// Команда отзыва доступа
+bot.command("revoke", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    const userId = ctx.message.text.split(" ")[1];
+    if (!userId) return ctx.reply("Использование: /revoke USER_ID");
+
+    users = loadUsers();
+    users.approved = users.approved.filter(id => id !== userId);
+    saveUsers(users);
+
+    await ctx.reply(`✅ Доступ отозван: ${userId}`);
+});
 
 // =====================
 bot.launch();
