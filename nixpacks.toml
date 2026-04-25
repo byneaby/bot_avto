@@ -1,5 +1,5 @@
-[phases.setup]
-nixPkgs = ["chromium", "nodejs"]
+[phases.install]
+cmds = ["npm install", "npx playwright install chromium --with-deps"]
 
 [start]
 cmd = "node bot.js"
