@@ -99,14 +99,18 @@ async function handleLogin(ctx) {
 
     const qrPath = `/tmp/qr_${chatId}.png`;
 
-    // Делаем скриншот QR блока
+    // Ждём появления QR картинки и делаем скриншот
     try {
-        const qrBlock = await page.waitForSelector('.css-1ucnu3w-MuiStack-root', { timeout: 10000 });
+        // Ждём пока появится canvas или img внутри QR блока
+        const qrImage = await page.waitForSelector('.css-1ucnu3w-MuiStack-root canvas, .css-1ucnu3w-MuiStack-root img, .css-1ucnu3w-MuiStack-root svg', { timeout: 15000 });
+        console.log('QR картинка появилась');
+        await new Promise(r => setTimeout(r, 1000));
+        const qrBlock = await page.$('.css-1ucnu3w-MuiStack-root');
         await qrBlock.screenshot({ path: qrPath });
-        console.log('QR блок найден и сфотографирован');
+        console.log('QR сфотографирован');
     } catch(e) {
+        console.log('Ошибка ожидания QR:', e.message);
         await page.screenshot({ path: qrPath, fullPage: true });
-        console.log('QR блок не найден, fullPage скриншот:', e.message);
     }
 
     console.log('4. Скриншот готов, отправляю...');
