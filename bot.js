@@ -18,9 +18,9 @@ function loadConfig() {
         return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
     } catch {
         return {
-            adminId: null,         // ID админа (первый кто напишет /admin)
-            isPaid: false,         // true = бот платный
-            contactUsername: "",   // @username куда писать для оплаты
+            adminId: null,
+            isPaid: false,
+            contactUsername: "",
             contactText: "Напишите нам для получения доступа!"
         };
     }
@@ -52,7 +52,7 @@ const bot = new Telegraf(BOT_TOKEN);
 // =====================
 const sessions = {};
 const loginJobs = {};
-const adminState = {}; // отслеживаем что вводит админ
+const adminState = {};
 
 // =====================
 // 🎛 МЕНЮ
@@ -167,26 +167,57 @@ async function handleLogin(ctx) {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     });
+
     const page = await browser.newPage();
 
-    await page.goto(LOGIN_URL);
-    await new Promise(r => setTimeout(r, 5000));
-
-    const qrPath = `/tmp/qr_${chatId}.png`;
-
     try {
-        await page.waitForSelector('.css-1yjvs5a svg', { timeout: 15000 });
-        await new Promise(r => setTimeout(r, 1000));
-        const qrBlock = await page.$('.css-1yjvs5a');
-        await qrBlock.screenshot({ path: qrPath });
-    } catch(e) {
-        await page.screenshot({ path: qrPath, fullPage: true });
-    }
+        await page.goto(LOGIN_URL);
+        await new Promise(r => setTimeout(r, 5000));
 
-    await ctx.replyWithPhoto(
-        { source: qrPath },
-        { caption: "📱 Отсканируйте QR через приложение eGov\n\n⏳ Бот автоматически определит вход..." }
-    );
+        const qrPath = `/tmp/qr_${chatId}.png`;
+
+        try {
+            await page.waitForSelector('.css-1yjvs5a svg', { timeout: 15000 });
+            await new Promise(r => setTimeout(r, 1000));
+            const qrBlock = await page.$('.css-1yjvs5a');
+            await qrBlock.screenshot({ path: qrPath });
+        } catch(e) {
+            await page.screenshot({ path: qrPath, fullPage: true });
+        }
+
+        // ✅ Получаем session_id из cookies страницы
+        const pageCookies = await page.cookies();
+        const sessionCookie = pageCookies.find(c => c.name === 'session_id');
+
+        let inlineKeyboard = null;
+        if (sessionCookie) {
+            const mgovUrl = `https://api.avtomektep.kz/mgovSign?id=${sessionCookie.value}&type=AUTHORIZE`;
+            const egovLink = `https://m.egov.kz/mobileSign/?link=${encodeURIComponent(mgovUrl)}`;
+            inlineKeyboard = {
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: "📲 Открыть eGov Mobile", url: egovLink }
+                    ]]
+                }
+            };
+        }
+
+        const caption = "📱 Отсканируйте QR через приложение eGov\n\n" +
+            (inlineKeyboard ? "👆 Или нажмите кнопку ниже — откроется eGov прямо на телефоне\n\n" : "") +
+            "⏳ Бот автоматически определит вход...";
+
+        await ctx.replyWithPhoto(
+            { source: qrPath },
+            {
+                caption,
+                ...(inlineKeyboard || {})
+            }
+        );
+
+    } catch(e) {
+        await browser.close().catch(() => {});
+        return ctx.reply("❌ Не удалось загрузить страницу входа. Попробуйте снова.", mainMenu);
+    }
 
     const interval = setInterval(async () => {
         try {
@@ -201,12 +232,13 @@ async function handleLogin(ctx) {
                 await handleInfo(ctx);
             }
         } catch (e) {
-            clearInterval(loginJobs[chatId].interval);
+            clearInterval(loginJobs[chatId]?.interval);
             delete loginJobs[chatId];
             await browser.close().catch(() => {});
             await ctx.reply("❌ Ошибка при входе. Попробуйте снова.", mainMenu);
         }
     }, 4000);
+
     loginJobs[chatId] = { interval, browser };
 }
 
@@ -296,7 +328,6 @@ IBAN: ${acc.iban || "-"}
 bot.start(async (ctx) => {
     const chatId = ctx.chat.id;
 
-    // Первый пользователь становится админом
     if (!config.adminId) {
         config.adminId = String(chatId);
         saveConfig(config);
@@ -428,7 +459,6 @@ bot.hears("📩 Запросить доступ", async (ctx) => {
     });
     saveUsers(users);
 
-    // Уведомляем админа
     if (config.adminId) {
         await bot.telegram.sendMessage(
             config.adminId,
@@ -447,7 +477,7 @@ bot.action("set_username", async (ctx) => {
     if (!isAdmin(ctx.chat.id)) return;
     adminState[ctx.chat.id] = "waiting_username";
     await ctx.editMessageText(
-        `👤 Текущий username: ${config.contactUsername ? "@" + config.contactUsername : "не задан"}\n\nОтправьте новый @username (без @):`,
+        `👤 Текущий username: ${config.contactUsername ? "@" + config.contactUsername : "не задан"}\n\nОтправьте новый @username (без @):`
     );
 });
 
@@ -455,7 +485,7 @@ bot.action("set_contact_text", async (ctx) => {
     if (!isAdmin(ctx.chat.id)) return;
     adminState[ctx.chat.id] = "waiting_text";
     await ctx.editMessageText(
-        `📝 Текущий текст:\n${config.contactText}\n\nОтправьте новый текст сообщения для пользователей без доступа:`,
+        `📝 Текущий текст:\n${config.contactText}\n\nОтправьте новый текст сообщения для пользователей без доступа:`
     );
 });
 
@@ -468,12 +498,8 @@ bot.on("text", async (ctx, next) => {
 
     const text = ctx.message.text;
 
-    // Игнорируем кнопки меню
-    if (text.startsWith("📋") || text.startsWith("👥") || text.startsWith("📞") ||
-        text.startsWith("💰") || text.startsWith("🏠") || text.startsWith("🔐") ||
-        text.startsWith("📊") || text.startsWith("📩")) {
-        return next();
-    }
+    const menuPrefixes = ["📋","👥","📞","💰","🏠","🔐","📊","📩"];
+    if (menuPrefixes.some(p => text.startsWith(p))) return next();
 
     if (state === "waiting_username") {
         config.contactUsername = text.replace("@", "").trim();
@@ -503,7 +529,6 @@ bot.action(/approve_(.+)/, async (ctx) => {
 
     await ctx.editMessageText(`✅ Доступ выдан пользователю ${userId}`);
 
-    // Уведомляем пользователя
     try {
         await bot.telegram.sendMessage(userId, "🎉 Вам выдан доступ к боту!\n\nТеперь вы можете пользоваться всеми функциями.", mainMenu);
     } catch(e) {}
