@@ -3,11 +3,10 @@
   "version": "1.0.0",
   "main": "bot.js",
   "scripts": {
-    "postinstall": "npx playwright install chromium --with-deps",
     "start": "node bot.js"
   },
   "dependencies": {
     "telegraf": "^4.16.3",
-    "playwright": "^1.44.0"
+    "puppeteer": "^22.6.2"
   }
 }
