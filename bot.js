@@ -93,7 +93,9 @@ async function handleLogin(ctx) {
 
     console.log('2. Браузер запущен, открываю страницу...');
     await page.goto(LOGIN_URL);
-    console.log('3. Страница открыта, делаю скриншот...');
+    console.log('3. Страница открыта, жду QR...');
+    await page.waitForTimeout(5000);
+    console.log('3. Делаю скриншот...');
 
     const qrPath = `/tmp/qr_${chatId}.png`;
     await page.screenshot({ path: qrPath });
