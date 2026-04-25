@@ -79,6 +79,7 @@ async function handleLogin(ctx) {
 
     await ctx.reply("🔐 Открываю страницу входа, подождите...");
 
+    console.log('1. Запускаю браузер...');
     const browser = await chromium.launch({
         headless: true,
         executablePath: process.env.CHROMIUM_PATH || undefined,
@@ -93,11 +94,14 @@ async function handleLogin(ctx) {
     });
     const page = await browser.newPage();
 
+    console.log('2. Браузер запущен, открываю страницу...');
     await page.goto(LOGIN_URL);
+    console.log('3. Страница открыта, делаю скриншот...');
 
     const qrPath = `/tmp/qr_${chatId}.png`;
     await page.screenshot({ path: qrPath });
 
+    console.log('4. Скриншот готов, отправляю...');
     await ctx.replyWithPhoto(
         { source: qrPath },
         { caption: "📱 Отсканируйте QR через приложение eGov\n\n⏳ Бот автоматически определит вход..." }
