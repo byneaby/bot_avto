@@ -102,10 +102,10 @@ async function handleLogin(ctx) {
     // Ждём появления QR картинки и делаем скриншот
     try {
         // Ждём пока появится canvas или img внутри QR блока
-        const qrImage = await page.waitForSelector('.css-1ucnu3w-MuiStack-root canvas, .css-1ucnu3w-MuiStack-root img, .css-1ucnu3w-MuiStack-root svg', { timeout: 15000 });
+        const qrImage = await page.waitForSelector('.css-1yjvs5a svg', { timeout: 15000 });
         console.log('QR картинка появилась');
         await new Promise(r => setTimeout(r, 1000));
-        const qrBlock = await page.$('.css-1ucnu3w-MuiStack-root');
+        const qrBlock = await page.$('.css-1yjvs5a');
         await qrBlock.screenshot({ path: qrPath });
         console.log('QR сфотографирован');
     } catch(e) {
