@@ -52,6 +52,7 @@ const bot = new Telegraf(BOT_TOKEN);
 // =====================
 const sessions = {};
 const loginJobs = {};
+const adminState = {}; // отслеживаем что вводит админ
 
 // =====================
 // 🎛 МЕНЮ
@@ -361,18 +362,23 @@ bot.hears("👥 Пользователи с доступом", async (ctx) => {
 // Настройка контакта
 bot.hears("📞 Настройка контакта", async (ctx) => {
     if (!isAdmin(ctx.chat.id)) return;
+    adminState[ctx.chat.id] = "waiting_contact";
     await ctx.reply(
-        `📞 <b>Текущий контакт:</b>\nUsername: @${config.contactUsername || "не задан"}\nТекст: ${config.contactText}\n\nОтправьте новый @username для связи:`,
-        { parse_mode: "HTML" }
+`📞 <b>Текущие настройки контакта:</b>
+Username: ${config.contactUsername ? "@" + config.contactUsername : "не задан"}
+Текст: ${config.contactText}
+
+Выберите что изменить:`,
+        {
+            parse_mode: "HTML",
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "👤 Изменить @username", callback_data: "set_username" }],
+                    [{ text: "📝 Изменить текст сообщения", callback_data: "set_contact_text" }]
+                ]
+            }
+        }
     );
-    // Ждём следующего сообщения
-    bot.once("message", async (ctx2) => {
-        if (!isAdmin(ctx2.chat.id)) return;
-        const text = ctx2.message.text?.replace("@", "").trim();
-        config.contactUsername = text;
-        saveConfig(config);
-        await ctx2.reply(`✅ Контакт обновлён: @${text}`, adminMenu);
-    });
 });
 
 // Режим оплаты
@@ -437,6 +443,53 @@ bot.hears("📩 Запросить доступ", async (ctx) => {
 // =====================
 // 🎛 CALLBACK КНОПКИ
 // =====================
+bot.action("set_username", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    adminState[ctx.chat.id] = "waiting_username";
+    await ctx.editMessageText(
+        `👤 Текущий username: ${config.contactUsername ? "@" + config.contactUsername : "не задан"}\n\nОтправьте новый @username (без @):`,
+    );
+});
+
+bot.action("set_contact_text", async (ctx) => {
+    if (!isAdmin(ctx.chat.id)) return;
+    adminState[ctx.chat.id] = "waiting_text";
+    await ctx.editMessageText(
+        `📝 Текущий текст:\n${config.contactText}\n\nОтправьте новый текст сообщения для пользователей без доступа:`,
+    );
+});
+
+// Обработка текстового ввода от админа
+bot.on("text", async (ctx, next) => {
+    const chatId = ctx.chat.id;
+    const state = adminState[chatId];
+
+    if (!isAdmin(chatId) || !state) return next();
+
+    const text = ctx.message.text;
+
+    // Игнорируем кнопки меню
+    if (text.startsWith("📋") || text.startsWith("👥") || text.startsWith("📞") ||
+        text.startsWith("💰") || text.startsWith("🏠") || text.startsWith("🔐") ||
+        text.startsWith("📊") || text.startsWith("📩")) {
+        return next();
+    }
+
+    if (state === "waiting_username") {
+        config.contactUsername = text.replace("@", "").trim();
+        saveConfig(config);
+        delete adminState[chatId];
+        await ctx.reply(`✅ Username обновлён: @${config.contactUsername}`, adminMenu);
+    } else if (state === "waiting_text") {
+        config.contactText = text.trim();
+        saveConfig(config);
+        delete adminState[chatId];
+        await ctx.reply(`✅ Текст обновлён:\n${config.contactText}`, adminMenu);
+    } else {
+        return next();
+    }
+});
+
 bot.action(/approve_(.+)/, async (ctx) => {
     if (!isAdmin(ctx.chat.id)) return;
     const userId = ctx.match[1];
