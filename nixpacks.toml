@@ -1,5 +1,9 @@
 [phases.install]
-cmds = ["npm install", "npx playwright install chromium --with-deps"]
+cmds = [
+    "npm install",
+    "npx playwright install chromium",
+    "npx playwright install-deps chromium"
+]
 
 [start]
 cmd = "node bot.js"
